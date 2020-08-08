@@ -1,6 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
+#define mssgLen 0x10
+
+char defaultString[mssgLen*2+1] = "003C6E471F4E22740E081B3154590B1A";
+unsigned char defaultMssg[mssgLen] = {0x00, 0x3C, 0x6E, 0x47, 0x1F, 0x4E, 0x22, 0x74, 0x0E, 0x08, 0x1B, 0x31, 0x54, 0x59, 0x0B, 0x1A};
+
+unsigned char is_hex(char c);
+unsigned char ch2uch(char c);
+int usage(char* progName);
+unsigned char *cli_opt(int argc, char *argv[]);
 
 unsigned char *ByteSub(unsigned char *M);
 unsigned char **ShiftRows(unsigned char *B);
@@ -36,9 +46,13 @@ SRt[0x10] =
 
 int main(int argc, char *argv[])
 {
-  unsigned char i, j;
+  unsigned char i, j, *A;
   S = (unsigned char **) malloc(sizeof(unsigned char *)*0x10);
-  unsigned char A[0x10] = {0x00, 0x3C, 0x6E, 0x47, 0x1F, 0x4E, 0x22, 0x74, 0x0E, 0x08, 0x1B, 0x31, 0x54, 0x59, 0x0B, 0x1A};//de prueba
+
+  A = cli_opt(argc, argv);
+  if (A == NULL)
+    return 0;
+
   for (i = 0; i < 0x10; i++) {
     S[i] = (unsigned char *) malloc(sizeof(unsigned char)*0x10);
   }
@@ -66,24 +80,23 @@ int main(int argc, char *argv[])
     }
   }  //SR[][] son los cambios en ShiftRows
 
+  // ronda del algoritmo
   unsigned char *B, **BSR, **C = (unsigned char **) malloc(sizeof(unsigned char *)*0x4);
   for (printf("\nA  =  "),i = 0; i < 0x10; i++) {
-    printf("%03d  ",A[i]);
+    printf("%02x  ",A[i]);
   }
   B = ByteSub(A);
   for (printf("\nB  =  "),i = 0; i < 0x10; i++) {
-    printf("%03d  ",B[i]);
+    printf("%02x  ",B[i]);
   }
   BSR = ShiftRows(B);
   for (printf("\nBSR=  "),i = 0; i < 0x4; i++) {
-    printf("%03d  %03d  %03d  %03d  ",BSR[i][0],BSR[i][1],BSR[i][2],BSR[i][3]);
-  }/*
-[676,880,982,843,731,577,806,987,1256,1200,1130,1167,1115,1142,1158,876]
-[164, 112, 214, 75, 219, 65, 38, 219, 232, 176, 106, 143, 91, 118, 134, 108]
-*/
+    printf("%02x  %02x  %02x  %02x  ",BSR[i][0],BSR[i][1],BSR[i][2],BSR[i][3]);
+  }
+
   for (printf("\nC  =  "),i = 0; i < 0x4; i++) {
-    C[i] = MixCol(BSR[i]);//mixCol(BSR[i]) => M x B[SR[i]] => C[i] Vi,j en [0,3]
-    printf("%03d  %03d  %03d  %03d  ",C[i][0],C[i][1],C[i][2],C[i][3]);
+    C[i] = MixCol(BSR[i]);
+    printf("%02x  %02x  %02x  %02x  ",C[i][0],C[i][1],C[i][2],C[i][3]);
   }
   printf("\n");
   return 0;
@@ -125,4 +138,92 @@ unsigned char *MixCol(unsigned char *b){
   return C;
 }
 
-//MC[i][j]
+unsigned char *cli_opt(int argc, char *argv[]){
+  int option, is_str=1, i, j;
+  char c;
+  unsigned char *ans = defaultMssg;
+  FILE *fp;
+  while((option = getopt(argc, argv, ":hsf")) != -1){
+    switch(option){
+      case 'h':
+        usage(argv[0]);
+        return NULL;
+      case 's':
+        is_str = 1;
+        break;
+      case 'f':
+        is_str = 0;
+        break;
+    }
+  }
+  if (is_str){
+    if (optind < argc){
+      ans = (unsigned char *) calloc(mssgLen, sizeof(unsigned char));
+      for (i=0, j=0; i<mssgLen && j<mssgLen*2 && is_hex(argv[optind][j]); i+=1, j+=1){
+        ans[i] = ch2uch(argv[optind][j])*0x10;
+        j+=1;
+        if (is_hex(argv[optind][j])){
+          ans[i] += ch2uch(argv[optind][j]);
+        }
+        else
+          break;
+      }
+      if (i < mssgLen)
+        printf("error de entrada: %c (valor ascii: %d) no corresponde a un caracter hexadecimal. no se leyo el total de 128 bits (8 caracteres hex.)\n", argv[optind][j], argv[optind][j]);
+    }
+  }
+  else{
+    if (optind < argc){
+      fp = fopen(argv[optind],"r");
+      if(fp == NULL){
+        perror("Error in opening file");
+        return NULL;
+      }
+      c = fgetc(fp);
+      for (i=0; i<mssgLen && is_hex(c); i+=1){
+        ans[i] = ch2uch(c)*0x10;
+        c = fgetc(fp);
+        if (is_hex(c)){
+          ans[i] += ch2uch(c);
+          c = fgetc(fp);
+        }
+      }
+      if (i < mssgLen)
+        printf("error de entrada: %c (valor ascii: %d) no corresponde a un caracter hexadecimal. no se leyo el total de 128 bits (8 caracteres hex.)\n", c, c);
+      fclose(fp);
+    }
+  }
+  return ans;
+}
+
+int usage(char* progName){
+  char *usage_mssg =
+  /*AES.o*/ "[Opciones] [M]\n"
+  "Opciones:\n"
+  "-h                 Imprimir este mensaje de ayuda\n"
+  "-s                 Input mensaje en el string M. Opcion default\n"
+  "-f                 Input mensaje en el archivo M. opcion alterna a -s\n"
+  "\n"
+  "M := mensaje (en hexadecimal) o nombre de archivo, si no se incluye se utiliza\n"
+  "el valor default:"
+      ;
+  printf("%s %s %s\n",progName, usage_mssg, defaultString);
+  return 0;
+}
+
+unsigned char ch2uch(char c){
+  if (c <= '9' && c >= '0')
+    return c - '0';
+  else{if (c <= 'f' && c >= 'a')
+    return 0xa + c - 'a';
+  else{if (c <= 'F' && c >= 'A')
+    return 0xa + c - 'A';
+  else{
+    printf("error de entrada: %c (valor ascii: %d) no corresponde a un caracter hexadecimal.\n", c, c);
+    return 0;
+  }}}
+}
+
+unsigned char is_hex(char c){
+  return ((c <= '9' && c >= '0') || (c <= 'f' && c >= 'a') || (c <= 'F' && c >= 'A'));
+}
